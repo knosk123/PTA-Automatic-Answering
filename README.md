@@ -1,2 +1,2 @@
 # PTA-Automatic-Answering
-PTA自动答题
+基于https://github.com/lmengx/fuckpta开发
