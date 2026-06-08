@@ -258,6 +258,18 @@ const defaultConfig = {
 
 以下是题目内容：
 {problem content}`,
+  trueFalsePrompt: `你是一个专业的判断题做题工具
+请直接输出**符合格式的JSON**，不要解释、不要说明、不要多余内容。
+每道题只返回 "T" 或 "F"。
+
+格式如下
+[
+  "T",
+  "F"
+]
+
+以下是题目内容：
+{problem content}`,
   fillBlankPrompt: `你是一个专业的填空题做题工具
 请直接输出**符合格式的JSON**，不要解释、不要说明、不要多余内容。
 每道题返回一个数组，数组内按该题输入框顺序填写答案。
@@ -390,11 +402,18 @@ function checkAutoPopup() {
     if (config.autoPopup) {
       const isProgrammingList = isProgrammingListPage();
       const isProgrammingDetail = isProgrammingDetailPage();
+      const isTrueFalse = isTrueFalseQuestionPage();
       const isChoice = isChoiceQuestionPage();
       const isFillBlank = isFillBlankQuestionPage();
       const isSubmission = isSubmissionResultPage();
 
-      if (isChoice) {
+      if (isTrueFalse) {
+        removeFloatingWindow();
+        createFloatingWindow();
+        setTimeout(() => {
+          fetchTrueFalseQuestions();
+        }, 100);
+      } else if (isChoice) {
         removeFloatingWindow();
         createFloatingWindow();
         setTimeout(() => {
@@ -508,16 +527,28 @@ function getProblemType() {
   return 'PROGRAMMING';
 }
 
+// 检查是否是判断题页面（/type/1）
+function isTrueFalseQuestionPage() {
+  const url = window.location.href;
+  return /\/problem-sets\/.+\/exam\/problems\/type\/1/.test(url);
+}
+
 // 检查是否是选择题页面（/type/2）
 function isChoiceQuestionPage() {
   const url = window.location.href;
   return /\/problem-sets\/.+\/exam\/problems\/type\/2/.test(url);
 }
 
-// 检查是否是填空题页面（/type/4）
+// 检查是否是填空题页面（/type/4 普通填空，/type/5 程序填空）
 function isFillBlankQuestionPage() {
   const url = window.location.href;
-  return /\/problem-sets\/.+\/exam\/problems\/type\/4/.test(url);
+  return /\/problem-sets\/.+\/exam\/problems\/type\/[45]/.test(url);
+}
+
+function getFillBlankProblemType() {
+  const url = window.location.href;
+  if (/\/type\/5/.test(url)) return 'FILL_IN_THE_BLANK_FOR_PROGRAMMING';
+  return 'FILL_IN_THE_BLANK';
 }
 
 // 检查是否是提交结果页面
@@ -1126,6 +1157,80 @@ async function fetchChoiceQuestions() {
   }
 }
 
+// 获取判断题列表
+async function fetchTrueFalseQuestions() {
+  if (!isTrueFalseQuestionPage()) {
+    return;
+  }
+
+  try {
+    const url = window.location.href;
+    const problemSetMatch = url.match(/\/problem-sets\/(\d+)/);
+    if (!problemSetMatch) {
+      console.log('无法从URL中提取problemSetId');
+      return;
+    }
+    const problemSetId = problemSetMatch[1];
+
+    const examId = await getExamId(problemSetId);
+    if (!examId) {
+      console.log('无法获取examId');
+      return;
+    }
+
+    window.trueFalseExamId = examId;
+    window.trueFalseProblemSetId = problemSetId;
+
+    const listResponse = await pintiaFetch(
+      `https://pintia.cn/api/problem-sets/${problemSetId}/exam-problems?exam_id=${examId}&problem_type=TRUE_OR_FALSE`,
+      {
+        headers: {
+          accept: 'application/json;charset=UTF-8',
+          'content-type': 'application/json;charset=UTF-8',
+          'x-lollipop': getLollipop(),
+          'x-marshmallow': ''
+        },
+        method: 'GET',
+        credentials: 'include'
+      }
+    );
+
+    if (!listResponse.ok) {
+      console.log('获取判断题列表失败:', listResponse.status);
+      return;
+    }
+
+    const data = await listResponse.json();
+    if (data.problemSetProblems) {
+      const questions = data.problemSetProblems.map((p, idx) => ({
+        id: p.id,
+        index: idx + 1,
+        content: p.content || p.description || ''
+      }));
+      window.trueFalseQuestions = questions;
+      console.log('判断题列表（精简）:', questions);
+
+      const countEl = document.getElementById('pta-tf-count');
+      if (countEl) {
+        countEl.textContent = `共 ${questions.length} 题`;
+      }
+      const batchBtn = document.getElementById('pta-tf-batch-btn');
+      if (batchBtn) {
+        batchBtn.disabled = questions.length === 0;
+      }
+
+      const floatWindow = document.getElementById('pta-helper-float');
+      if (floatWindow) {
+        renderTrueFalseList(floatWindow);
+      }
+    } else {
+      console.log('判断题列表响应:', data);
+    }
+  } catch (error) {
+    console.error('获取判断题列表出错:', error);
+  }
+}
+
 // 获取填空题列表
 async function fetchFillBlankQuestions() {
   if (!isFillBlankQuestionPage()) {
@@ -1151,8 +1256,9 @@ async function fetchFillBlankQuestions() {
     window.fillBlankProblemSetId = problemSetId;
 
     const domQuestions = await waitForFillBlankDomQuestions();
+    const fillBlankProblemType = getFillBlankProblemType();
     const listResponse = await pintiaFetch(
-      `https://pintia.cn/api/problem-sets/${problemSetId}/exam-problems?exam_id=${examId}&problem_type=FILL_IN_THE_BLANK`,
+      `https://pintia.cn/api/problem-sets/${problemSetId}/exam-problems?exam_id=${examId}&problem_type=${fillBlankProblemType}`,
       {
         headers: {
           accept: 'application/json;charset=UTF-8',
@@ -1192,6 +1298,7 @@ async function fetchFillBlankQuestions() {
       id: q.id,
       index: q.index,
       inputCount: q.inputCount,
+      problemType: fillBlankProblemType,
       content: q.content
     })));
 
@@ -1235,11 +1342,19 @@ function getFillBlankDomQuestions() {
     groups.get(block).inputs.push(input);
   });
 
-  return [...groups.values()].map((group, idx) => ({
+  return [...groups.values()].sort((a, b) => {
+    const ar = a.block.getBoundingClientRect();
+    const br = b.block.getBoundingClientRect();
+    return ar.top === br.top ? ar.left - br.left : ar.top - br.top;
+  }).map((group, idx) => ({
     index: idx + 1,
     block: group.block,
     text: group.text,
-    inputs: group.inputs
+    inputs: group.inputs.sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return ar.top === br.top ? ar.left - br.left : ar.top - br.top;
+    })
   }));
 }
 
@@ -2469,7 +2584,9 @@ function createFloatingWindow() {
   floatWindow.id = 'pta-helper-float';
 
   // 根据页面类型选择不同的内容
-  if (isChoiceQuestionPage()) {
+  if (isTrueFalseQuestionPage()) {
+    floatWindow.innerHTML = createTrueFalseQuestionHTML();
+  } else if (isChoiceQuestionPage()) {
     floatWindow.innerHTML = createChoiceQuestionHTML();
   } else if (isFillBlankQuestionPage()) {
     floatWindow.innerHTML = createFillBlankQuestionHTML();
@@ -2765,7 +2882,9 @@ function createFloatingWindow() {
   });
 
   // 根据页面类型初始化不同的功能
-  if (isChoiceQuestionPage()) {
+  if (isTrueFalseQuestionPage()) {
+    initTrueFalseQuestionEvents(floatWindow);
+  } else if (isChoiceQuestionPage()) {
     initChoiceQuestionEvents(floatWindow);
   } else if (isFillBlankQuestionPage()) {
     initFillBlankQuestionEvents(floatWindow);
@@ -2859,6 +2978,211 @@ function renderChoiceList(floatWindow) {
 function getChoiceItemByQuestionId(listEl, questionId) {
   if (!listEl) return null;
   return listEl.querySelector(`.choice-item[data-question-id="${CSS.escape(String(questionId))}"]`);
+}
+
+// 初始化判断题事件
+function initTrueFalseQuestionEvents(floatWindow) {
+  const batchBtn = floatWindow.querySelector('#pta-tf-batch-btn');
+
+  if (batchBtn) {
+    batchBtn.addEventListener('click', () => {
+      if (batchBtn.textContent === '获取答案') {
+        batchProcessTrueFalseQuestions(floatWindow);
+      } else if (batchBtn.textContent === '填写答案') {
+        fillTrueFalseAnswersToPage(floatWindow);
+      }
+    });
+  }
+
+  const countEl = floatWindow.querySelector('#pta-tf-count');
+  if (countEl && window.trueFalseQuestions) {
+    countEl.textContent = `共 ${window.trueFalseQuestions.length} 题`;
+  }
+
+  if (window.trueFalseQuestions && window.trueFalseQuestions.length > 0) {
+    renderTrueFalseList(floatWindow);
+  }
+}
+
+// 渲染判断题列表到浮窗
+function renderTrueFalseList(floatWindow) {
+  const questions = window.trueFalseQuestions;
+  const listEl = floatWindow.querySelector('#pta-tf-list');
+  if (!listEl || !questions) return;
+
+  let html = '';
+  questions.forEach(q => {
+    const preview = normalizeFillBlankText(q.content).slice(0, 160);
+    html += `<div class="tf-item" data-question-id="${escapeHtml(String(q.id))}" style="padding:8px 10px;border-bottom:1px solid #f5f5f5;font-size:13px;">
+      <div style="display:flex;align-items:flex-start;gap:6px;">
+        <span style="color:#999;flex:0 0 auto;">${q.index}.</span>
+        <span style="flex:1;min-width:0;">${escapeHtml(preview || '空题干')}</span>
+        <span class="tf-answer" style="color:#32F08C;font-weight:bold;display:none;flex:0 0 auto;margin-left:8px;"></span>
+      </div>
+    </div>`;
+  });
+  listEl.innerHTML = html;
+
+  const batchBtn = floatWindow.querySelector('#pta-tf-batch-btn');
+  if (batchBtn) batchBtn.disabled = questions.length === 0;
+}
+
+function getTrueFalseItemByQuestionId(listEl, questionId) {
+  if (!listEl) return null;
+  return listEl.querySelector(`.tf-item[data-question-id="${CSS.escape(String(questionId))}"]`);
+}
+
+function normalizeTrueFalseAnswer(answer) {
+  const text = String(answer || '').trim().toUpperCase();
+  if (/^(T|TRUE|对|正确|是|Y|YES)$/.test(text)) return 'T';
+  if (/^(F|FALSE|错|错误|否|N|NO)$/.test(text)) return 'F';
+  const match = text.match(/[TF]/);
+  return match ? match[0] : '';
+}
+
+// 分批获取判断题答案（不自动保存）
+async function batchProcessTrueFalseQuestions(floatWindow) {
+  const questions = window.trueFalseQuestions;
+  if (!questions || questions.length === 0) return;
+
+  const batchBtn = floatWindow.querySelector('#pta-tf-batch-btn');
+  const progressEl = floatWindow.querySelector('#pta-tf-progress');
+  const progressText = floatWindow.querySelector('#pta-tf-progress-text');
+  const progressBar = floatWindow.querySelector('#pta-tf-progress-bar');
+  const statusEl = floatWindow.querySelector('#pta-tf-status');
+  const listEl = floatWindow.querySelector('#pta-tf-list');
+
+  const config = await new Promise(resolve => { getConfig(resolve); });
+  const apiConfig = getActiveApiConfig(config);
+  if (!config.aiEnabled || !apiConfig) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = 'AI 未启用或未配置 API 密钥';
+    return;
+  }
+
+  const BATCH_SIZE = config.choiceBatchSize || 20;
+  const total = questions.length;
+  let current = 0;
+  const allAnswers = {};
+
+  if (batchBtn) {
+    batchBtn.textContent = '获取中';
+    batchBtn.disabled = true;
+  }
+  progressEl.style.display = 'block';
+
+  const promptTemplate = config.trueFalsePrompt || defaultConfig.trueFalsePrompt;
+
+  for (let i = 0; i < total; i += BATCH_SIZE) {
+    const batch = questions.slice(i, i + BATCH_SIZE);
+    const promptItems = batch.map(q =>
+      `题目${q.index}: ${q.content}`
+    ).join('\n\n');
+    const systemPrompt = promptTemplate.replace('{problem content}', promptItems);
+
+    try {
+      const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: '' }
+      ];
+      const raw = await generateAIResponse(apiConfig.url, apiConfig.key, apiConfig.model, messages);
+      const answers = parseAIJsonArray(raw);
+
+      if (Array.isArray(answers)) {
+        batch.forEach((q, idx) => {
+          const answer = normalizeTrueFalseAnswer(answers[idx]) || '?';
+          allAnswers[q.id] = answer;
+          const item = getTrueFalseItemByQuestionId(listEl, q.id);
+          if (item) {
+            const answerSpan = item.querySelector('.tf-answer');
+            if (answerSpan) {
+              answerSpan.textContent = '→ ' + answer;
+              answerSpan.style.color = '#32F08C';
+              answerSpan.style.display = 'inline';
+            }
+          }
+        });
+      } else {
+        throw new Error('AI 返回格式不正确');
+      }
+    } catch (e) {
+      batch.forEach(q => {
+        const item = getTrueFalseItemByQuestionId(listEl, q.id);
+        if (item) {
+          const answerSpan = item.querySelector('.tf-answer');
+          if (answerSpan) {
+            answerSpan.textContent = '→ 解析失败';
+            answerSpan.style.color = '#f44336';
+            answerSpan.style.display = 'inline';
+          }
+        }
+      });
+    }
+
+    current += batch.length;
+    const pct = Math.round((current / total) * 100);
+    progressText.textContent = `${current}/${total}`;
+    progressBar.style.width = pct + '%';
+  }
+
+  window.trueFalseAllAnswers = allAnswers;
+  if (batchBtn) {
+    batchBtn.textContent = '填写答案';
+    batchBtn.disabled = false;
+    batchBtn.style.background = '#32F08C';
+  }
+  statusEl.style.display = 'block';
+  statusEl.style.color = '#2196F3';
+  statusEl.style.background = '#e3f2fd';
+  statusEl.textContent = `答案获取完毕，共 ${total} 题，请检查后点击填写答案`;
+}
+
+function fillTrueFalseAnswersToPage(floatWindow) {
+  const questions = window.trueFalseQuestions;
+  const allAnswers = window.trueFalseAllAnswers;
+  const statusEl = floatWindow.querySelector('#pta-tf-status');
+  const batchBtn = floatWindow.querySelector('#pta-tf-batch-btn');
+
+  if (!questions || !allAnswers || Object.keys(allAnswers).length === 0) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = '没有可填写的答案';
+    return;
+  }
+
+  const groups = getChoiceDomGroups();
+  if (groups.length === 0) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = '未找到页面判断题选项，请刷新页面后重试';
+    return;
+  }
+
+  let filledCount = 0;
+  questions.forEach((q, idx) => {
+    const answer = normalizeTrueFalseAnswer(allAnswers[q.id]);
+    const optionIndex = answer === 'T' ? 0 : answer === 'F' ? 1 : -1;
+    const radio = groups[idx]?.inputs?.[optionIndex];
+    if (radio) {
+      selectChoiceRadio(radio);
+      filledCount++;
+    }
+  });
+
+  statusEl.style.display = 'block';
+  statusEl.style.color = filledCount > 0 ? '#32F08C' : '#f44336';
+  statusEl.style.background = filledCount > 0 ? '#e8f5e9' : '#ffebee';
+  statusEl.textContent = filledCount > 0
+    ? `已填写 ${filledCount} 题，请检查后点击页面保存`
+    : '未能填写答案，请检查页面选项是否已加载';
+  if (batchBtn && filledCount > 0) {
+    batchBtn.textContent = '已填写';
+    batchBtn.disabled = true;
+  }
 }
 
 // 初始化填空题事件
@@ -3436,6 +3760,35 @@ function createChoiceQuestionHTML() {
       </div>
       <div id="pta-choice-results" style="max-height:400px;overflow-y:auto;">
         <div id="pta-choice-list" style="text-align:center;padding:20px;color:#999;">加载中...</div>
+      </div>
+    </div>
+  `;
+}
+
+// 创建判断题页面HTML
+function createTrueFalseQuestionHTML() {
+  return `
+    <div class="pta-float-header">
+      <span>PTA 答题辅助 - 判断题</span>
+      <button class="pta-float-close">×</button>
+    </div>
+    <div class="pta-float-body">
+      <div id="pta-tf-status" style="display:none;margin-bottom:12px;padding:10px;border-radius:6px;font-size:13px;text-align:center;"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span id="pta-tf-count" style="font-size:14px;color:#666;">加载中...</span>
+        <button id="pta-tf-batch-btn" class="btn-complete-all" disabled style="width:auto;padding:8px 24px;">获取答案</button>
+      </div>
+      <div id="pta-tf-progress" style="display:none;margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;font-size:12px;color:#999;margin-bottom:4px;">
+          <span>处理进度</span>
+          <span id="pta-tf-progress-text">0/0</span>
+        </div>
+        <div style="width:100%;height:6px;background:#e8e8e8;border-radius:3px;overflow:hidden;">
+          <div id="pta-tf-progress-bar" style="width:0%;height:100%;background:#32F08C;border-radius:3px;transition:width 0.3s;"></div>
+        </div>
+      </div>
+      <div id="pta-tf-results" style="max-height:400px;overflow-y:auto;">
+        <div id="pta-tf-list" style="text-align:center;padding:20px;color:#999;">加载中...</div>
       </div>
     </div>
   `;
