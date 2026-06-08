@@ -3,7 +3,10 @@
 ## 使用方法
 1.git clone https://github.com/knosk123/PTA-Automatic-Answering.git
 
-2.点击管理扩展
+2.点击管理扩展，到dist文件目录下
+
+<img width="791" height="246" alt="图片" src="https://github.com/user-attachments/assets/f5c0b36d-92ed-496d-80bd-da825686fbdf" />
+
 
 <img width="580" height="535" alt="图片" src="https://github.com/user-attachments/assets/78cf236c-4d1d-4b82-adc2-9d65aee0695a" />
 
