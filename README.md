@@ -22,5 +22,6 @@
 
 <img width="1219" height="594" alt="图片" src="https://github.com/user-attachments/assets/6c3cf93b-06db-432c-955c-7ade66ab60df" />
 
-6.
+6.出现弹窗即可自动答题
 
+<img width="1474" height="1053" alt="712ed26906b24c441262a4ebeab866b7" src="https://github.com/user-attachments/assets/c96e7101-6440-4330-8f3a-a93d77e38752" />
