@@ -1,5 +1,8 @@
 # PTA自动答题
 参考项目 https://github.com/lmengx/fuckpta.git
+
+感谢原项目作者和相关开源生态。
+
 ## 使用方法
 1.git clone https://github.com/knosk123/PTA-Automatic-Answering.git
 
