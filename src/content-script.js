@@ -1,3 +1,5 @@
+import { normalizeOpenAICompatibleBaseUrl } from './utils/apiUrl.js';
+
 // 显示PrimeVue风格的确认对话框
 function showConfirmDialog(options) {
   // 创建对话框容器
@@ -290,12 +292,14 @@ function getEnabledModels(apiSources) {
   if (!Array.isArray(apiSources)) return models;
   apiSources.forEach(source => {
     if (source.enabled) {
-      source.models.forEach(model => {
+      const sourceKeys = Array.isArray(source.keys) ? source.keys.filter(key => String(key || '').trim()) : [];
+      if (sourceKeys.length === 0) return;
+      source.models.filter(model => String(model || '').trim()).forEach(model => {
         models.push({
-          id: model,
+          id: String(model).trim(),
           sourceName: source.name,
           sourceUrl: source.url,
-          sourceKeys: source.keys
+          sourceKeys
         });
       });
     }
@@ -303,12 +307,36 @@ function getEnabledModels(apiSources) {
   return models;
 }
 
+function normalizeConfiguredApiUrl(apiUrl, model = '') {
+  const url = String(apiUrl || '').trim();
+  const lowerUrl = url.toLowerCase();
+  const lowerModel = String(model || '').toLowerCase();
+
+  if (
+    lowerUrl.includes('anthropic') ||
+    lowerUrl.includes('google') ||
+    lowerUrl.includes('gemini') ||
+    lowerUrl.includes('azure') ||
+    lowerUrl.includes('openai.azure') ||
+    lowerUrl.includes('volcano') ||
+    lowerUrl.includes('ark.cn-beijing.volces.com') ||
+    lowerUrl.includes('volces.com') ||
+    lowerModel.includes('claude') ||
+    lowerModel.includes('gemini') ||
+    lowerModel.includes('volcano')
+  ) {
+    return url;
+  }
+
+  return normalizeOpenAICompatibleBaseUrl(url);
+}
+
 // 获取当前可用的 API 配置（用于实际调用）
 function getActiveApiConfig(config) {
   // 如果存在旧的配置，优先使用旧的配置（向后兼容）
   if (config.aiApiKey) {
     // 直接使用配置中的 URL，不添加额外后缀
-    let url = config.aiApiUrl || 'https://api.openai.com/v1';
+    let url = normalizeConfiguredApiUrl(config.aiApiUrl || 'https://api.openai.com/v1', config.aiModel || 'gpt-3.5-turbo');
     return {
       url: url,
       key: config.aiApiKey,
@@ -347,11 +375,11 @@ function getActiveApiConfig(config) {
   if (!selectedSource || !selectedModel) return null;
   
   // 直接使用配置中的 URL，不添加额外后缀
-  let url = selectedSource.url;
+  let url = normalizeConfiguredApiUrl(selectedSource.url, selectedModel.id);
   
   return {
     url: url,
-    key: selectedSource.keys[Math.floor(Math.random() * selectedSource.keys.length)],
+    key: selectedModel.sourceKeys[Math.floor(Math.random() * selectedModel.sourceKeys.length)],
     model: selectedModel.id
   };
 }
@@ -1703,13 +1731,63 @@ function detectProvider(apiUrl, model) {
   return 'openai-compatible';
 }
 
+function getAIErrorMessage(error, status) {
+  if (!error) return status ? `HTTP ${status}` : 'Unknown error';
+  if (typeof error === 'string') return error || (status ? `HTTP ${status}` : 'Unknown error');
+  return error.error?.message || error.message || (status ? `HTTP ${status}` : 'Unknown error');
+}
+
+function sendExtensionMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+async function fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, stream = false) {
+  const response = await sendExtensionMessage({
+    action: 'aiFetch',
+    apiUrl,
+    endpoint: 'chat/completions',
+    openAICompatible: true,
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`
+    },
+    body: {
+      model,
+      messages,
+      temperature: 0.7,
+      stream
+    }
+  });
+
+  if (!response?.success) {
+    throw new Error(response?.error || 'AI request failed');
+  }
+  if (!response.ok) {
+    throw new Error(getAIErrorMessage(response.data, response.status));
+  }
+  return response.data;
+}
+
+function getOpenAIMessageContent(data) {
+  return data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || '';
+}
+
 // OpenAI适配器
 const OpenAIAdapter = {
   name: 'OpenAI',
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] OpenAI流式调用', { apiUrl, model });
+      console.log('[PTA AI] OpenAI流式调用', { model });
       
       const response = await fetch(`${apiUrl}/chat/completions`, {
         method: 'POST',
@@ -1764,7 +1842,7 @@ const OpenAIAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] OpenAI非流式调用', { apiUrl, model });
+    console.log('[PTA AI] OpenAI非流式调用', { model });
     
     const response = await fetch(`${apiUrl}/chat/completions`, {
       method: 'POST',
@@ -1796,7 +1874,7 @@ const AnthropicAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] Anthropic流式调用', { apiUrl, model });
+      console.log('[PTA AI] Anthropic流式调用', { model });
       
       // 转换消息格式
       const systemMessage = messages.find(m => m.role === 'system')?.content || '';
@@ -1862,7 +1940,7 @@ const AnthropicAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] Anthropic非流式调用', { apiUrl, model });
+    console.log('[PTA AI] Anthropic非流式调用', { model });
     
     const systemMessage = messages.find(m => m.role === 'system')?.content || '';
     const userMessages = messages.filter(m => m.role !== 'system');
@@ -1902,7 +1980,7 @@ const GoogleAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] Google流式调用', { apiUrl, model });
+      console.log('[PTA AI] Google流式调用', { model });
       
       // 转换消息格式为Gemini格式
       const contents = messages.map(m => ({
@@ -1954,7 +2032,7 @@ const GoogleAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] Google非流式调用', { apiUrl, model });
+    console.log('[PTA AI] Google非流式调用', { model });
     
     const contents = messages.map(m => ({
       role: m.role === 'user' ? 'user' : 'model',
@@ -1991,7 +2069,7 @@ const AzureAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] Azure流式调用', { apiUrl, model });
+      console.log('[PTA AI] Azure流式调用', { model });
       
       const response = await fetch(`${apiUrl}/openai/deployments/${model}/chat/completions?api-version=2024-02-01`, {
         method: 'POST',
@@ -2045,7 +2123,7 @@ const AzureAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] Azure非流式调用', { apiUrl, model });
+    console.log('[PTA AI] Azure非流式调用', { model });
     
     const response = await fetch(`${apiUrl}/openai/deployments/${model}/chat/completions?api-version=2024-02-01`, {
       method: 'POST',
@@ -2076,7 +2154,7 @@ const DeepSeekAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] DeepSeek流式调用', { apiUrl, model });
+      console.log('[PTA AI] DeepSeek流式调用', { model });
       
       const response = await fetch(`${apiUrl}/chat/completions`, {
         method: 'POST',
@@ -2131,7 +2209,7 @@ const DeepSeekAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] DeepSeek非流式调用', { apiUrl, model });
+    console.log('[PTA AI] DeepSeek非流式调用', { model });
     
     const response = await fetch(`${apiUrl}/chat/completions`, {
       method: 'POST',
@@ -2163,7 +2241,7 @@ const SiliconFlowAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] 硅基流动流式调用', { apiUrl, model });
+      console.log('[PTA AI] 硅基流动流式调用', { model });
       
       const response = await fetch(`${apiUrl}/chat/completions`, {
         method: 'POST',
@@ -2218,7 +2296,7 @@ const SiliconFlowAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] 硅基流动非流式调用', { apiUrl, model });
+    console.log('[PTA AI] 硅基流动非流式调用', { model });
     
     const response = await fetch(`${apiUrl}/chat/completions`, {
       method: 'POST',
@@ -2250,7 +2328,7 @@ const VolcanoAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] 火山方舟流式调用', { apiUrl, model });
+      console.log('[PTA AI] 火山方舟流式调用', { model });
       
       const response = await fetch(`${apiUrl}/api/v3/chat/completions`, {
         method: 'POST',
@@ -2305,7 +2383,7 @@ const VolcanoAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] 火山方舟非流式调用', { apiUrl, model });
+    console.log('[PTA AI] 火山方舟非流式调用', { model });
     
     const response = await fetch(`${apiUrl}/api/v3/chat/completions`, {
       method: 'POST',
@@ -2337,7 +2415,7 @@ const AliyunAdapter = {
   
   async stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError) {
     try {
-      console.log('[PTA AI] 阿里云百炼流式调用', { apiUrl, model });
+      console.log('[PTA AI] 阿里云百炼流式调用', { model });
       
       const response = await fetch(`${apiUrl}/chat/completions`, {
         method: 'POST',
@@ -2392,7 +2470,7 @@ const AliyunAdapter = {
   },
   
   async generate(apiUrl, apiKey, model, messages) {
-    console.log('[PTA AI] 阿里云百炼非流式调用', { apiUrl, model });
+    console.log('[PTA AI] 阿里云百炼非流式调用', { model });
     
     const response = await fetch(`${apiUrl}/chat/completions`, {
       method: 'POST',
@@ -2436,9 +2514,25 @@ async function streamAIResponse(apiUrl, apiKey, model, messages, onChunk, onComp
   const provider = detectProvider(apiUrl, model);
   const adapter = AIAdapters[provider] || AIAdapters['openai-compatible'];
   
-  console.log('[PTA AI] 使用适配器', { provider: adapter.name, apiUrl, model });
+  console.log('[PTA AI] 使用适配器', { provider: adapter.name, model });
   
-  await adapter.stream(apiUrl, apiKey, model, messages, onChunk, onComplete, onError);
+  const wrappedOnError = async (error) => {
+    if (provider !== 'openai' && provider !== 'openai-compatible' && provider !== 'deepseek' && provider !== 'siliconflow' && provider !== 'aliyun') {
+      onError(error);
+      return;
+    }
+
+    try {
+      const data = await fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, false);
+      const content = getOpenAIMessageContent(data);
+      if (content) onChunk(content);
+      onComplete();
+    } catch (fallbackError) {
+      onError(fallbackError);
+    }
+  };
+
+  await adapter.stream(apiUrl, apiKey, model, messages, onChunk, onComplete, wrappedOnError);
 }
 
 // 非流式AI调用函数（使用适配器）
@@ -2446,9 +2540,18 @@ async function generateAIResponse(apiUrl, apiKey, model, messages) {
   const provider = detectProvider(apiUrl, model);
   const adapter = AIAdapters[provider] || AIAdapters['openai-compatible'];
   
-  console.log('[PTA AI] 使用适配器', { provider: adapter.name, apiUrl, model });
+  console.log('[PTA AI] 使用适配器', { provider: adapter.name, model });
   
-  return await adapter.generate(apiUrl, apiKey, model, messages);
+  try {
+    return await adapter.generate(apiUrl, apiKey, model, messages);
+  } catch (error) {
+    if (provider !== 'openai' && provider !== 'openai-compatible' && provider !== 'deepseek' && provider !== 'siliconflow' && provider !== 'aliyun') {
+      throw error;
+    }
+
+    const data = await fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, false);
+    return getOpenAIMessageContent(data);
+  }
 }
 
 // 简化版流式输出函数（直接调用，速度更快）

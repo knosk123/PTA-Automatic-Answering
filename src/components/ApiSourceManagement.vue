@@ -73,6 +73,8 @@ function showMessage(message, type = 'success') {
   
   if (type === 'error') {
     messageElement.style.backgroundColor = '#dc2626';
+  } else if (type === 'warning') {
+    messageElement.style.backgroundColor = '#f59e0b';
   } else {
     messageElement.style.backgroundColor = '#10b981';
   }
@@ -96,13 +98,62 @@ function showMessage(message, type = 'success') {
   }, 2000);
 }
 
+function getAIErrorMessage(error, status) {
+  if (!error) return status ? `HTTP ${status}` : '未知错误';
+  if (typeof error === 'string') return error || (status ? `HTTP ${status}` : '未知错误');
+  return error.error?.message || error.message || (status ? `HTTP ${status}` : '未知错误');
+}
+
+function isTemporaryServiceError(response, message = '') {
+  const status = Number(response?.status || 0);
+  const text = String(message || '').toLowerCase();
+  return (
+    status === 429 ||
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    text.includes('temporarily unavailable') ||
+    text.includes('service unavailable') ||
+    text.includes('timeout') ||
+    text.includes('rate limit')
+  );
+}
+
+function sendExtensionMessage(message) {
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(message, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+function looksLikeUrl(value) {
+  return /^https?:\/\//i.test(String(value || '').trim());
+}
+
+function resolveApiSourceUrl(source) {
+  const name = String(source.name || '').trim();
+  const url = String(source.url || '').trim();
+
+  if (looksLikeUrl(name) && (!url || url === 'https://api.openai.com/v1')) {
+    return name;
+  }
+
+  return url || 'https://api.openai.com/v1';
+}
+
 // 加载配置
 function loadConfig() {
   chrome.storage.local.get(['apiSources'], (result) => {
     if (Array.isArray(result.apiSources) && result.apiSources.length > 0) {
       config.value.apiSources = result.apiSources.map(source => ({
         name: source.name || '',
-        url: source.url || 'https://api.openai.com/v1',
+        url: resolveApiSourceUrl(source),
         keys: Array.isArray(source.keys) ? source.keys.filter(k => k.trim()) : [],
         models: Array.isArray(source.models) ? source.models.filter(m => m.trim()) : ['gpt-3.5-turbo'],
         enabled: source.enabled !== false,
@@ -175,16 +226,18 @@ function addApiSource() {
     showMessage('请输入 API 源名称', 'error');
     return;
   }
+
+  const sourceName = newSourceName.value.trim();
   
   const newSource = {
-    name: newSourceName.value.trim(),
-    url: 'https://api.openai.com/v1',
+    name: sourceName,
+    url: looksLikeUrl(sourceName) ? sourceName : 'https://api.openai.com/v1',
     keys: [''],
-    models: ['gpt-3.5-turbo'],
+    models: looksLikeUrl(sourceName) ? [''] : ['gpt-3.5-turbo'],
     enabled: false,
     icon: {
       type: 'text',
-      content: newSourceName.value.trim().charAt(0).toUpperCase(),
+      content: sourceName.charAt(0).toUpperCase(),
       color: '#32F08C'
     }
   };
@@ -231,59 +284,40 @@ async function checkModel(model, apiKey, apiUrl) {
   checkStatus.value[checkKey] = 'checking';
   
   try {
-    // 检查是否是硅基流动的API
-    if (apiUrl.includes('siliconflow.cn')) {
-      // 硅基流动的模型检测逻辑
-      // 由于硅基流动的API可能与标准OpenAI API不同，我们使用一个简单的测试请求
-      const response = await fetch(`${apiUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          model: model,
-          messages: [
-            {
-              role: 'user',
-              content: '测试模型是否可用'
-            }
-          ],
-          max_tokens: 1
-        })
-      });
-      
-      if (response.ok) {
-        checkStatus.value[checkKey] = 'valid';
-        return { valid: true, message: '模型可用' };
-      } else {
-        const errorData = await response.json();
-        checkStatus.value[checkKey] = 'invalid';
-        return { valid: false, message: errorData.error?.message || '模型不可用' };
+    const response = await sendExtensionMessage({
+      action: 'aiFetch',
+      apiUrl,
+      endpoint: 'chat/completions',
+      openAICompatible: true,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: {
+        model,
+        messages: [{ role: 'user', content: '测试模型是否可用' }],
+        stream: false
       }
-    } else {
-      // 其他平台（如阿里云百炼）的标准检测逻辑
-      const response = await fetch(`${apiUrl}/models/${model}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json'
-        }
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        checkStatus.value[checkKey] = 'valid';
-        return { valid: true, message: '模型可用' };
-      } else {
-        const errorData = await response.json();
-        checkStatus.value[checkKey] = 'invalid';
-        return { valid: false, message: errorData.error?.message || '模型不可用' };
-      }
+    });
+
+    if (response?.success && response.ok) {
+      checkStatus.value[checkKey] = 'valid';
+      return { valid: true, message: '模型可用' };
     }
-  } catch (error) {
+
+    const message = getAIErrorMessage(response?.data || response?.error, response?.status);
+    if (isTemporaryServiceError(response, message)) {
+      checkStatus.value[checkKey] = 'unknown';
+      return { valid: null, message: `服务临时不可用，模型已保留：${message}` };
+    }
+
     checkStatus.value[checkKey] = 'invalid';
-    return { valid: false, message: '网络错误，请检查 API 地址' };
+    return { valid: false, message };
+  } catch (error) {
+    const message = error.message || '网络错误，请检查 API 地址';
+    checkStatus.value[checkKey] = 'unknown';
+    return { valid: null, message: `暂时无法确认，模型已保留：${message}` };
   }
 }
 
@@ -303,6 +337,8 @@ async function autoCheckModel(modelIndex) {
   const result = await checkModel(model, apiKey, selectedSource.value.url);
   if (result.valid) {
     showMessage('模型检测成功：' + result.message);
+  } else if (result.valid === null) {
+    showMessage('模型暂不可测：' + result.message, 'warning');
   } else {
     showMessage('模型检测失败：' + result.message, 'error');
   }
@@ -351,7 +387,11 @@ async function fetchAvailableModels() {
   showMessage('正在获取可用模型...');
   
   try {
-    const response = await fetch(`${selectedSource.value.url}/models`, {
+    const response = await sendExtensionMessage({
+      action: 'aiFetch',
+      apiUrl: selectedSource.value.url,
+      endpoint: 'models',
+      openAICompatible: true,
       method: 'GET',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -359,21 +399,24 @@ async function fetchAvailableModels() {
       }
     });
     
-    if (response.ok) {
-      const data = await response.json();
-      availableModels.value = data.data.map(model => ({
+    if (response?.success && response.ok) {
+      const data = response.data;
+      availableModels.value = (data.data || []).map(model => ({
         id: model.id,
         name: model.id,
         description: model.description || ''
       }));
+      if (availableModels.value.length === 0) {
+        showMessage('模型列表为空，请手动填写模型名称后点击检测', 'error');
+        return;
+      }
       showModelList.value = true;
       showMessage('获取可用模型成功');
     } else {
-      const errorData = await response.json();
-      showMessage('获取模型失败：' + (errorData.error?.message || '未知错误'), 'error');
+      showMessage('模型列表接口不可用，请手动填写模型名称后点击检测：' + getAIErrorMessage(response?.data || response?.error, response?.status), 'error');
     }
   } catch (error) {
-    showMessage('网络错误，请检查 API 地址', 'error');
+    showMessage('模型列表接口不可用，请手动填写模型名称后点击检测：' + (error.message || '请检查 API 地址'), 'error');
   }
 }
 
@@ -694,6 +737,9 @@ onMounted(() => {
                   </span>
                   <span v-else-if="checkStatus[`${selectedSourceIndex}-${model}`] === 'valid'" class="check-text valid">
                     可用
+                  </span>
+                  <span v-else-if="checkStatus[`${selectedSourceIndex}-${model}`] === 'unknown'" class="check-text unknown">
+                    暂不可测
                   </span>
                   <span v-else-if="checkStatus[`${selectedSourceIndex}-${model}`] === 'invalid'" class="check-text invalid">
                     不可用
@@ -1365,6 +1411,12 @@ input:checked + .toggle-slider:before {
   color: #10b981;
 }
 
+.btn-check.unknown {
+  background-color: #fffbeb;
+  border-color: #f59e0b;
+  color: #b45309;
+}
+
 .btn-check.invalid {
   background-color: #fef2f2;
   border-color: #ef4444;
@@ -1377,6 +1429,10 @@ input:checked + .toggle-slider:before {
 
 .check-text.valid {
   color: #10b981;
+}
+
+.check-text.unknown {
+  color: #b45309;
 }
 
 .check-text.invalid {

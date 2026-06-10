@@ -1,4 +1,5 @@
-<script setup>import { ref } from 'vue';
+<script setup>
+import { ref } from 'vue';
 const props = defineProps({
  model: {
  type: String,
@@ -23,6 +24,17 @@ const messages = ref([
 ]);
 const inputMessage = ref('');
 const isSending = ref(false);
+function sendExtensionMessage(message) {
+ return new Promise((resolve, reject) => {
+ chrome.runtime.sendMessage(message, (response) => {
+ if (chrome.runtime.lastError) {
+ reject(new Error(chrome.runtime.lastError.message));
+ return;
+ }
+ resolve(response);
+ });
+ });
+}
 async function sendMessage() {
  if (!inputMessage.value.trim() || isSending.value)
  return;
@@ -42,60 +54,38 @@ async function sendMessage() {
  });
  try {
  isSending.value = true;
- // 构建请求，启用流式输出
+ // 构建请求
  const requestBody = {
  model: props.model,
  messages: [
  { role: 'user', content: userMessage }
  ],
- max_tokens: 1000,
  temperature: 0.7,
- stream: true
+ stream: false
  };
  // 发送请求
- const response = await fetch(`${props.apiUrl}/chat/completions`, {
+ const response = await sendExtensionMessage({
+ action: 'aiFetch',
+ apiUrl: props.apiUrl,
+ endpoint: 'chat/completions',
+ openAICompatible: true,
  method: 'POST',
  headers: {
  'Content-Type': 'application/json',
  'Authorization': `Bearer ${props.apiKey}`
  },
- body: JSON.stringify(requestBody)
+ body: requestBody
  });
- if (!response.ok) {
- throw new Error(`HTTP error! status: ${response.status}`);
- }
- // 获取流式响应
- const reader = response.body.getReader();
- const decoder = new TextDecoder('utf-8');
  const lastMessage = messages.value[messages.value.length - 1];
  lastMessage.isLoading = false;
- // 逐块读取响应
- while (true) {
- const { done, value } = await reader.read();
- if (done)
- break;
- const chunk = decoder.decode(value);
- // 解析 SSE 格式的数据
- const lines = chunk.split('\n');
- for (const line of lines) {
- if (line.startsWith('data: ')) {
- const dataStr = line.slice(6);
- if (dataStr === '[DONE]') {
- break;
+ if (!response?.success) {
+ throw new Error(response?.error || '请求失败');
  }
- try {
- const data = JSON.parse(dataStr);
- if (data.choices && data.choices[0] && data.choices[0].delta) {
- const content = data.choices[0].delta.content || '';
- lastMessage.content += content;
+ if (!response.ok) {
+ const error = response.data?.error?.message || response.data?.message || `HTTP error! status: ${response.status}`;
+ throw new Error(error);
  }
- }
- catch (e) {
- // 忽略解析错误
- }
- }
- }
- }
+ lastMessage.content = response.data?.choices?.[0]?.message?.content || response.data?.choices?.[0]?.text || '';
  }
  catch (error) {
  console.error('发送消息失败:', error);
