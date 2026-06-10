@@ -17,6 +17,9 @@
 
 2.点击管理扩展，到dist文件目录下
 
+<img width="893" height="151" alt="图片" src="https://github.com/user-attachments/assets/5feacf0f-7000-4eb6-aee2-665f489105f9" />
+
+
 <img width="791" height="246" alt="图片" src="https://github.com/user-attachments/assets/f5c0b36d-92ed-496d-80bd-da825686fbdf" />
 
 
@@ -30,9 +33,13 @@
 
 <img width="1210" height="691" alt="图片" src="https://github.com/user-attachments/assets/9bf93df0-52b4-4b7c-83da-99aa8c41bea4" />
 
+
 5.选择ai
 
 <img width="1219" height="594" alt="图片" src="https://github.com/user-attachments/assets/6c3cf93b-06db-432c-955c-7ade66ab60df" />
+
+### 选择中转站的api
+<img width="1719" height="1159" alt="147cff74f95897d782a9957d253e6eda" src="https://github.com/user-attachments/assets/2b5428da-4a14-4713-ba4c-302761ab4dfc" />
 
 6.出现弹窗即可自动答题
 
