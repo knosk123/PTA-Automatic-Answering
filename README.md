@@ -13,7 +13,7 @@
 4.修改提交逻辑，由ai自动点击选项，人工手动点击保存提交。
 
 ## 使用方法
-1.git clone https://github.com/knosk123/PTA-Automatic-Answering.git
+1.直接下载Package或者git clone https://github.com/knosk123/PTA-Automatic-Answering.git
 
 2.点击管理扩展，到dist文件目录下
 
