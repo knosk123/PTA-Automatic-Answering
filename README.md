@@ -21,7 +21,7 @@
 
 <img width="893" height="151" alt="图片" src="https://github.com/user-attachments/assets/5feacf0f-7000-4eb6-aee2-665f489105f9" />
 
-点击加载压缩的扩展
+### 点击加载压缩的扩展
 
 <img width="791" height="246" alt="图片" src="https://github.com/user-attachments/assets/f5c0b36d-92ed-496d-80bd-da825686fbdf" />
 
