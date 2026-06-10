@@ -30,7 +30,7 @@
 
 <img width="1210" height="691" alt="图片" src="https://github.com/user-attachments/assets/9bf93df0-52b4-4b7c-83da-99aa8c41bea4" />
 
-5.选择ai，https://bailian.console.aliyun.com/cn-beijing?spm=5176.29597918.J_F4r-7Zs_PtjrjEY48APSA.d_primary.5e87133cXUpU26&tab=model#/efm/model_experience_center/text
+5.选择ai
 
 <img width="1219" height="594" alt="图片" src="https://github.com/user-attachments/assets/6c3cf93b-06db-432c-955c-7ade66ab60df" />
 
