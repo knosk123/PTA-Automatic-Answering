@@ -3,6 +3,15 @@
 
 感谢原项目作者和相关开源生态。
 
+## 改进与优化
+1.解决了中转站api无法调用问题
+
+2.解决了判断题无法作答的问题
+
+3.部分填空题无法作答的问题
+
+4.修改提交逻辑，由ai自动点击选项，人工手动点击保存提交
+
 ## 使用方法
 1.git clone https://github.com/knosk123/PTA-Automatic-Answering.git
 
@@ -29,9 +38,6 @@
 
 <img width="1474" height="1053" alt="712ed26906b24c441262a4ebeab866b7" src="https://github.com/user-attachments/assets/c96e7101-6440-4330-8f3a-a93d77e38752" />
 
-## 改进与优化
-
-完善所有的题型，让所有题型都能一键自动填写答案
 
 ### 往后的优化
 - 无
