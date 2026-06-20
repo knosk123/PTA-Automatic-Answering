@@ -1,4 +1,17 @@
 import { normalizeOpenAICompatibleBaseUrl } from './utils/apiUrl.js';
+import {
+  buildOpenAICompatibleChatBody,
+  chooseFillBlankProblemContent,
+  getDefaultApiSources,
+  getOpenAIMessageContent as getOpenAIMessageContentValue,
+  getAIRequestTimeoutMs,
+  hasUsableFillBlankAnswer,
+  normalizeChoiceAnswer as normalizeChoiceAnswerValue,
+  normalizeFillBlankAnswer as normalizeFillBlankAnswerValue,
+  parseAIJsonArray as parseAIJsonArrayValue,
+  selectActiveApiConfig,
+  shouldUseBackgroundOpenAIRequest
+} from './utils/aiAnswerHelpers.js';
 
 // 显示PrimeVue风格的确认对话框
 function showConfirmDialog(options) {
@@ -214,7 +227,7 @@ function debugLog(message, data = null) {
 const defaultConfig = {
   autoPopup: true,
   language: 'c',
-  aiEnabled: false,
+  aiEnabled: true,
   aiApiKey: '',
   aiApiUrl: 'https://api.openai.com/v1',
   aiModel: 'gpt-3.5-turbo',
@@ -222,12 +235,12 @@ const defaultConfig = {
   debugEnabled: false,
   showBuildTime: false,
   extractDelay: 2000,
-  // 模型选择模式: 'manual' 手动选择, 'random' 随机选择
+  // 模型选择固定为随机
   modelSelectMode: 'random',
   // 手动选择的模型ID
   selectedModelId: '',
   // API 源列表
-  apiSources: [],
+  apiSources: getDefaultApiSources(),
   aiSystemPrompt: `你是专业的编程题 AC 生成器。
 语言：{language}
 
@@ -333,55 +346,7 @@ function normalizeConfiguredApiUrl(apiUrl, model = '') {
 
 // 获取当前可用的 API 配置（用于实际调用）
 function getActiveApiConfig(config) {
-  // 如果存在旧的配置，优先使用旧的配置（向后兼容）
-  if (config.aiApiKey) {
-    // 直接使用配置中的 URL，不添加额外后缀
-    let url = normalizeConfiguredApiUrl(config.aiApiUrl || 'https://api.openai.com/v1', config.aiModel || 'gpt-3.5-turbo');
-    return {
-      url: url,
-      key: config.aiApiKey,
-      model: config.aiModel || 'gpt-3.5-turbo'
-    };
-  }
-  
-  // 使用新的 apiSources 配置
-  // 确保 apiSources 是数组
-  const apiSources = Array.isArray(config.apiSources) ? config.apiSources : [];
-  const enabledSources = apiSources.filter(s => s.enabled);
-  if (enabledSources.length === 0) return null;
-  
-  // 获取所有已启用的模型
-  const enabledModels = getEnabledModels(apiSources);
-  if (enabledModels.length === 0) return null;
-  
-  let selectedModel;
-  let selectedSource;
-  
-  if (config.modelSelectMode === 'manual' && config.selectedModelId) {
-    // 手动选择模式
-    selectedModel = enabledModels.find(m => m.id === config.selectedModelId);
-    if (!selectedModel) {
-      // 如果手动选择的模型不可用，随机选择一个
-      selectedModel = enabledModels[Math.floor(Math.random() * enabledModels.length)];
-    }
-  } else {
-    // 随机选择模式
-    selectedModel = enabledModels[Math.floor(Math.random() * enabledModels.length)];
-  }
-  
-  // 找到对应的源
-  selectedSource = enabledSources.find(s => s.models.includes(selectedModel.id));
-  
-  if (!selectedSource || !selectedModel) return null;
-  
-  // 直接使用配置中的 URL，不添加额外后缀
-  let url = normalizeConfiguredApiUrl(selectedSource.url, selectedModel.id);
-  
-  return {
-    url: url,
-    key: selectedModel.sourceKeys[Math.floor(Math.random() * selectedModel.sourceKeys.length)],
-    model: selectedModel.id
-  };
+  return selectActiveApiConfig(config);
 }
 
 // 存储当前题目文本、提交结果数据和 AI 对话历史
@@ -807,8 +772,8 @@ async function fetchProblemList() {
 
               const apiConfig = getActiveApiConfig(config);
               
-              if (!config.aiEnabled || !apiConfig) {
-                throw new Error('AI 未启用或未配置 API 密钥');
+              if (!apiConfig) {
+                throw new Error('未配置 API 密钥');
               }
 
               const apiKey = apiConfig.key;
@@ -899,8 +864,8 @@ async function fetchProblemList() {
                 // 获取活动的 API 配置
                 const apiConfig = getActiveApiConfig(config);
                 
-                if (!config.aiEnabled || !apiConfig) {
-                  throw new Error('AI 未启用或未配置 API 密钥');
+                if (!apiConfig) {
+                  throw new Error('未配置 API 密钥');
                 }
 
                 // 初始化批次统计
@@ -1314,7 +1279,7 @@ async function fetchFillBlankQuestions() {
       return {
         id: apiProblem.id || `dom-${idx + 1}`,
         index: idx + 1,
-        content: apiProblem.content || apiProblem.description || domQuestion.text || '',
+        content: chooseFillBlankProblemContent(apiProblem, domQuestion, fillBlankProblemType),
         inputCount: domQuestion.inputs?.length || 1,
         inputs: domQuestion.inputs || [],
         block: domQuestion.block || null
@@ -1353,11 +1318,22 @@ function getFillBlankDomQuestions() {
     .filter(el => el.offsetParent !== null && !el.closest('#pta-helper-float'));
   const groups = new Map();
 
-  inputs.forEach(input => {
-    let block = input;
-    for (let i = 0; i < 7 && block; i++) {
-      block = block.parentElement;
+  function findQuestionBlock(input) {
+    let node = input;
+    let fallback = input;
+    for (let depth = 0; depth < 12 && node; depth += 1) {
+      const text = String(node.innerText || '');
+      if (/^\s*\d+[-.]\d+\s+/.test(text) || /^\s*\d+\s*[.、]\s+/.test(text)) {
+        return node;
+      }
+      if (depth === 7) fallback = node;
+      node = node.parentElement;
     }
+    return fallback?.parentElement || fallback;
+  }
+
+  inputs.forEach(input => {
+    const block = findQuestionBlock(input);
     if (!block) return;
 
     if (!groups.has(block)) {
@@ -1480,11 +1456,6 @@ async function extractProblemText() {
 // 检查并调用 AI 答题
 async function checkAndUseAI(problemText, isRetry = false, errorNote = '', attemptCount = 0) {
   getConfig(async function(config) {
-    if (!config.aiEnabled) {
-      //console.log('AI 答题未启用');
-      return;
-    }
-    
     // 获取活动的 API 配置
     const apiConfig = getActiveApiConfig(config);
     
@@ -1658,7 +1629,7 @@ function showSubmissionErrorHint() {
   hintElement.style.transition = 'all 0.3s ease';
   hintElement.style.opacity = '0';
   hintElement.style.transform = 'translateY(-20px)';
-  hintElement.textContent = '提交失败？点击查看使用PyCatch提交的方法';
+  hintElement.textContent = '提交失败？点击打开设置页面';
   
   // 添加点击事件
   hintElement.addEventListener('click', () => {
@@ -1666,7 +1637,7 @@ function showSubmissionErrorHint() {
     // 发送消息给background script，让它打开设置页面
     chrome.runtime.sendMessage({ 
       action: 'openOptionsWithTab', 
-      tab: 'subErr' 
+      tab: 'general' 
     }, (response) => {
       console.log('消息发送结果', response);
     });
@@ -1756,16 +1727,12 @@ async function fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, str
     endpoint: 'chat/completions',
     openAICompatible: true,
     method: 'POST',
+    timeoutMs: getAIRequestTimeoutMs({ reasoning: true }),
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${apiKey}`
     },
-    body: {
-      model,
-      messages,
-      temperature: 0.7,
-      stream
-    }
+    body: buildOpenAICompatibleChatBody(model, messages, stream, { apiUrl })
   });
 
   if (!response?.success) {
@@ -1778,7 +1745,7 @@ async function fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, str
 }
 
 function getOpenAIMessageContent(data) {
-  return data?.choices?.[0]?.message?.content || data?.choices?.[0]?.text || '';
+  return getOpenAIMessageContentValue(data);
 }
 
 // OpenAI适配器
@@ -2516,6 +2483,18 @@ async function streamAIResponse(apiUrl, apiKey, model, messages, onChunk, onComp
   
   console.log('[PTA AI] 使用适配器', { provider: adapter.name, model });
   
+  if (shouldUseBackgroundOpenAIRequest(provider)) {
+    try {
+      const data = await fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, false);
+      const content = getOpenAIMessageContent(data);
+      if (content) onChunk(content);
+      onComplete();
+    } catch (error) {
+      onError(error);
+    }
+    return;
+  }
+
   const wrappedOnError = async (error) => {
     if (provider !== 'openai' && provider !== 'openai-compatible' && provider !== 'deepseek' && provider !== 'siliconflow' && provider !== 'aliyun') {
       onError(error);
@@ -2542,6 +2521,11 @@ async function generateAIResponse(apiUrl, apiKey, model, messages) {
   
   console.log('[PTA AI] 使用适配器', { provider: adapter.name, model });
   
+  if (shouldUseBackgroundOpenAIRequest(provider)) {
+    const data = await fetchOpenAIChatViaBackground(apiUrl, apiKey, model, messages, false);
+    return getOpenAIMessageContent(data);
+  }
+
   try {
     return await adapter.generate(apiUrl, apiKey, model, messages);
   } catch (error) {
@@ -3027,6 +3011,25 @@ function createCodeEditorHTML() {
 }
 
 // 初始化选择题事件
+function showBatchFatalError(floatWindow, buttonSelector, statusSelector, error) {
+  const batchBtn = floatWindow.querySelector(buttonSelector);
+  const statusEl = floatWindow.querySelector(statusSelector);
+  const message = error?.message || String(error || 'unknown error');
+
+  if (batchBtn) {
+    batchBtn.textContent = '获取答案';
+    batchBtn.disabled = false;
+    batchBtn.style.background = '#32F08C';
+  }
+
+  if (statusEl) {
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = `获取答案失败：${message}`;
+  }
+}
+
 function initChoiceQuestionEvents(floatWindow) {
   const batchBtn = floatWindow.querySelector('#pta-choice-batch-btn');
   const resultsEl = floatWindow.querySelector('#pta-choice-results');
@@ -3035,7 +3038,9 @@ function initChoiceQuestionEvents(floatWindow) {
   if (batchBtn) {
     batchBtn.addEventListener('click', () => {
       if (batchBtn.textContent === '获取答案') {
-        batchProcessChoiceQuestions(floatWindow);
+        batchProcessChoiceQuestions(floatWindow).catch((error) => {
+          showBatchFatalError(floatWindow, '#pta-choice-batch-btn', '#pta-choice-status', error);
+        });
       } else if (batchBtn.textContent === '填写答案') {
         fillChoiceAnswersToPage(floatWindow);
       }
@@ -3090,7 +3095,9 @@ function initTrueFalseQuestionEvents(floatWindow) {
   if (batchBtn) {
     batchBtn.addEventListener('click', () => {
       if (batchBtn.textContent === '获取答案') {
-        batchProcessTrueFalseQuestions(floatWindow);
+        batchProcessTrueFalseQuestions(floatWindow).catch((error) => {
+          showBatchFatalError(floatWindow, '#pta-tf-batch-btn', '#pta-tf-status', error);
+        });
       } else if (batchBtn.textContent === '填写答案') {
         fillTrueFalseAnswersToPage(floatWindow);
       }
@@ -3157,11 +3164,11 @@ async function batchProcessTrueFalseQuestions(floatWindow) {
 
   const config = await new Promise(resolve => { getConfig(resolve); });
   const apiConfig = getActiveApiConfig(config);
-  if (!config.aiEnabled || !apiConfig) {
+  if (!apiConfig) {
     statusEl.style.display = 'block';
     statusEl.style.color = '#f44336';
     statusEl.style.background = '#ffebee';
-    statusEl.textContent = 'AI 未启用或未配置 API 密钥';
+    statusEl.textContent = '未配置 API 密钥';
     return;
   }
 
@@ -3169,6 +3176,7 @@ async function batchProcessTrueFalseQuestions(floatWindow) {
   const total = questions.length;
   let current = 0;
   const allAnswers = {};
+  let lastErrorMessage = '';
 
   if (batchBtn) {
     batchBtn.textContent = '获取中';
@@ -3191,6 +3199,9 @@ async function batchProcessTrueFalseQuestions(floatWindow) {
         { role: 'user', content: '' }
       ];
       const raw = await generateAIResponse(apiConfig.url, apiConfig.key, apiConfig.model, messages);
+      if (!String(raw || '').trim()) {
+        throw new Error('AI 返回内容为空');
+      }
       const answers = parseAIJsonArray(raw);
 
       if (Array.isArray(answers)) {
@@ -3211,6 +3222,7 @@ async function batchProcessTrueFalseQuestions(floatWindow) {
         throw new Error('AI 返回格式不正确');
       }
     } catch (e) {
+      lastErrorMessage = e?.message || String(e || '解析失败');
       batch.forEach(q => {
         const item = getTrueFalseItemByQuestionId(listEl, q.id);
         if (item) {
@@ -3231,6 +3243,20 @@ async function batchProcessTrueFalseQuestions(floatWindow) {
   }
 
   window.trueFalseAllAnswers = allAnswers;
+  if (Object.keys(allAnswers).length === 0) {
+    if (batchBtn) {
+      batchBtn.textContent = '获取答案';
+      batchBtn.disabled = false;
+      batchBtn.style.background = '#32F08C';
+    }
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = lastErrorMessage
+      ? `未获取到有效答案：${lastErrorMessage}`
+      : '未获取到有效答案，请检查模型返回格式后重试';
+    return;
+  }
   if (batchBtn) {
     batchBtn.textContent = '填写答案';
     batchBtn.disabled = false;
@@ -3295,7 +3321,9 @@ function initFillBlankQuestionEvents(floatWindow) {
   if (batchBtn) {
     batchBtn.addEventListener('click', () => {
       if (batchBtn.textContent === '获取答案') {
-        batchProcessFillBlankQuestions(floatWindow);
+        batchProcessFillBlankQuestions(floatWindow).catch((error) => {
+          showBatchFatalError(floatWindow, '#pta-fill-batch-btn', '#pta-fill-status', error);
+        });
       } else if (batchBtn.textContent === '填写答案') {
         fillBlankAnswersToPage(floatWindow);
       }
@@ -3349,32 +3377,11 @@ function normalizeFillBlankText(text) {
 }
 
 function parseAIJsonArray(raw) {
-  const cleaned = String(raw || '').replace(/```[\w]*\n?/g, '').trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch (error) {
-    const start = cleaned.indexOf('[');
-    const end = cleaned.lastIndexOf(']');
-    if (start >= 0 && end > start) {
-      return JSON.parse(cleaned.slice(start, end + 1));
-    }
-    throw error;
-  }
+  return parseAIJsonArrayValue(raw);
 }
 
 function normalizeFillBlankAnswer(answer, expectedCount) {
-  let values;
-  if (Array.isArray(answer)) {
-    values = answer;
-  } else if (answer === undefined || answer === null) {
-    values = [];
-  } else {
-    values = [answer];
-  }
-
-  values = values.map(v => String(v ?? '').trim());
-  while (values.length < expectedCount) values.push('');
-  return values.slice(0, expectedCount);
+  return normalizeFillBlankAnswerValue(answer, expectedCount);
 }
 
 // 分批获取填空题答案（不自动保存）
@@ -3391,11 +3398,11 @@ async function batchProcessFillBlankQuestions(floatWindow) {
 
   const config = await new Promise(resolve => { getConfig(resolve); });
   const apiConfig = getActiveApiConfig(config);
-  if (!config.aiEnabled || !apiConfig) {
+  if (!apiConfig) {
     statusEl.style.display = 'block';
     statusEl.style.color = '#f44336';
     statusEl.style.background = '#ffebee';
-    statusEl.textContent = 'AI 未启用或未配置 API 密钥';
+    statusEl.textContent = '未配置 API 密钥';
     return;
   }
 
@@ -3417,7 +3424,13 @@ async function batchProcessFillBlankQuestions(floatWindow) {
     const promptItems = batch.map(q =>
       `题目${q.index}（${q.inputCount}空）:\n${q.content}`
     ).join('\n\n');
-    const systemPrompt = promptTemplate.replace('{problem content}', promptItems);
+    const systemPrompt = [
+      '你是程序填空题答题工具。只返回合法 JSON，不要解释，不要 markdown。',
+      '返回格式必须是二维数组，外层数组长度等于题目数量；每道题一个数组，按页面输入框顺序填写每个空。',
+      '示例：[["stdio.h", "0"], ["main"]]',
+      '',
+      promptTemplate.replace('{problem content}', promptItems)
+    ].join('\n');
 
     try {
       const messages = [
@@ -3430,12 +3443,22 @@ async function batchProcessFillBlankQuestions(floatWindow) {
       if (Array.isArray(answers)) {
         batch.forEach((q, idx) => {
           const answer = normalizeFillBlankAnswer(answers[idx], q.inputCount);
-          allAnswers[q.id] = answer;
           const item = getFillItemByQuestionId(listEl, q.id);
+          if (!hasUsableFillBlankAnswer(answer)) {
+            const answerEl = item?.querySelector('.fill-answer');
+            if (answerEl) {
+              answerEl.textContent = '-> Parse failed';
+              answerEl.style.color = '#f44336';
+              answerEl.style.display = 'block';
+            }
+            return;
+          }
+
+          allAnswers[q.id] = answer;
           if (item) {
             const answerEl = item.querySelector('.fill-answer');
             if (answerEl) {
-              answerEl.textContent = '→ ' + answer.map((v, ai) => `${ai + 1}: ${v || '?'}`).join('；');
+              answerEl.textContent = '-> ' + answer.map((v, ai) => `${ai + 1}: ${v}`).join('; ');
               answerEl.style.color = '#32F08C';
               answerEl.style.display = 'block';
             }
@@ -3446,8 +3469,6 @@ async function batchProcessFillBlankQuestions(floatWindow) {
       }
     } catch (e) {
       batch.forEach(q => {
-        const answer = Array.from({ length: q.inputCount }, () => '');
-        allAnswers[q.id] = answer;
         const item = getFillItemByQuestionId(listEl, q.id);
         if (item) {
           const answerEl = item.querySelector('.fill-answer');
@@ -3467,6 +3488,18 @@ async function batchProcessFillBlankQuestions(floatWindow) {
   }
 
   window.fillBlankAllAnswers = allAnswers;
+  if (Object.keys(allAnswers).length === 0) {
+    if (batchBtn) {
+      batchBtn.textContent = '获取答案';
+      batchBtn.disabled = false;
+      batchBtn.style.background = '#32F08C';
+    }
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = '未获取到有效答案，请检查模型返回格式后重试';
+    return;
+  }
   if (batchBtn) {
     batchBtn.textContent = '填写答案';
     batchBtn.disabled = false;
@@ -3562,11 +3595,11 @@ async function batchProcessChoiceQuestions(floatWindow) {
 
   const config = await new Promise(resolve => { getConfig(resolve); });
   const apiConfig = getActiveApiConfig(config);
-  if (!config.aiEnabled || !apiConfig) {
+  if (!apiConfig) {
     statusEl.style.display = 'block';
     statusEl.style.color = '#f44336';
     statusEl.style.background = '#ffebee';
-    statusEl.textContent = 'AI 未启用或未配置 API 密钥';
+    statusEl.textContent = '未配置 API 密钥';
     return;
   }
 
@@ -3599,8 +3632,7 @@ async function batchProcessChoiceQuestions(floatWindow) {
         { role: 'user', content: '' }
       ];
       const raw = await generateAIResponse(apiConfig.url, apiConfig.key, apiConfig.model, messages);
-      const jsonStr = raw.replace(/```[\w]*\n?/g, '').trim();
-      const answers = JSON.parse(jsonStr);
+      const answers = parseAIJsonArray(raw);
 
       if (Array.isArray(answers)) {
         batch.forEach((q, idx) => {
@@ -3644,7 +3676,20 @@ async function batchProcessChoiceQuestions(floatWindow) {
   }
 
   // 全部获取完毕，按钮变成填写答案
+  // Store fetched answers before enabling the fill action.
   window.choiceAllAnswers = allAnswers;
+  if (Object.keys(allAnswers).length === 0) {
+    if (batchBtn) {
+      batchBtn.textContent = '获取答案';
+      batchBtn.disabled = false;
+      batchBtn.style.background = '#32F08C';
+    }
+    statusEl.style.display = 'block';
+    statusEl.style.color = '#f44336';
+    statusEl.style.background = '#ffebee';
+    statusEl.textContent = '未获取到有效答案，请检查模型返回格式后重试';
+    return;
+  }
   if (batchBtn) {
     batchBtn.textContent = '填写答案';
     batchBtn.disabled = false;
@@ -3701,8 +3746,7 @@ function getChoiceDomGroups() {
 }
 
 function normalizeChoiceAnswer(answer) {
-  const match = String(answer || '').trim().toUpperCase().match(/[A-Z]/);
-  return match ? match[0] : '';
+  return normalizeChoiceAnswerValue(answer);
 }
 
 function selectChoiceRadio(radio) {
@@ -4982,8 +5026,8 @@ function createSubmissionResultWindow() {
         // 获取活动的 API 配置
         const apiConfig = getActiveApiConfig(config);
         
-        if (!config.aiEnabled || !apiConfig) {
-          statusDiv.textContent = 'AI 未启用或未配置 API 密钥';
+        if (!apiConfig) {
+          statusDiv.textContent = '未配置 API 密钥';
           statusDiv.className = 'error';
           getAnswerBtn.disabled = false;
           getAnswerBtn.textContent = '获取答案';

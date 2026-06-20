@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue';
+import { getDefaultApiSources } from './utils/aiAnswerHelpers.js';
 
 // 状态提示
 const statusMessage = ref('');
@@ -10,10 +11,11 @@ const showStatus = ref(false);
 const defaultConfig = {
   autoPopup: true,
   language: 'c',
-  aiEnabled: false,
+  aiEnabled: true,
   aiApiKey: '',
   aiApiUrl: 'https://api.openai.com/v1',
   aiModel: 'gpt-3.5-turbo',
+  apiSources: getDefaultApiSources(),
   debugMode: false,
   debugEnabled: false,
   showBuildTime: false,
@@ -52,7 +54,7 @@ function exportAllConfig() {
 function exportAiConfig() {
   chrome.storage.local.get(['aiEnabled', 'aiApiKey', 'aiApiUrl', 'aiModel', 'aiSystemPrompt', 'aiErrorPrompt'], (result) => {
     const aiConfig = {
-      aiEnabled: result.aiEnabled ?? false,
+      aiEnabled: true,
       aiApiKey: result.aiApiKey ?? '',
       aiApiUrl: result.aiApiUrl ?? 'https://api.openai.com/v1',
       aiModel: result.aiModel ?? 'gpt-3.5-turbo',

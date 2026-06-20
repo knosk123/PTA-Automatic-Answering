@@ -7,7 +7,7 @@ export const PLUGIN_CONFIG = {
   version: BUILD_VERSION,
   
   // GitHub仓库地址
-  githubRepo: 'https://github.com/lmengx/fuckpta',
+  githubRepo: 'https://github.com/knosk123/PTA-Automatic-Answering',
   
   // GitHub版本文件地址
   githubVersionUrl: 'https://raw.githubusercontent.com/lmengx/fuckpta/main/ver.json',

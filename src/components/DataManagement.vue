@@ -1,4 +1,6 @@
 <script setup>
+import { getDefaultApiSources } from '../utils/aiAnswerHelpers.js';
+
 // 显示状态消息
 function showMessage(message, type = 'success') {
   // 创建临时的状态消息元素
@@ -48,14 +50,14 @@ function exportAllConfig() {
     const defaultConfig = {
       autoPopup: true,
       language: 'c',
-      aiEnabled: false,
+      aiEnabled: true,
       debugMode: false,
       debugEnabled: false,
       showBuildTime: false,
       extractDelay: 2000,
       modelSelectMode: 'random',
       selectedModelId: '',
-      apiSources: [],
+      apiSources: getDefaultApiSources(),
       aiSystemPrompt: `你是专业的编程题 AC 生成器。
 语言：{language}
 
@@ -93,12 +95,12 @@ function exportAllConfig() {
 
 // 导出 AI 配置
 function exportAiConfig() {
-  chrome.storage.local.get(['aiEnabled', 'modelSelectMode', 'selectedModelId', 'apiSources', 'aiSystemPrompt', 'aiErrorPrompt'], (result) => {
+  chrome.storage.local.get(['apiSources', 'aiSystemPrompt', 'aiErrorPrompt'], (result) => {
     const aiConfig = {
-      aiEnabled: result.aiEnabled || false,
-      modelSelectMode: result.modelSelectMode || 'random',
-      selectedModelId: result.selectedModelId || '',
-      apiSources: result.apiSources || [],
+      aiEnabled: true,
+      modelSelectMode: 'random',
+      selectedModelId: '',
+      apiSources: Array.isArray(result.apiSources) ? result.apiSources : getDefaultApiSources(),
       aiSystemPrompt: result.aiSystemPrompt || `你是专业的编程题 AC 生成器。
 语言：{language}
 
@@ -156,11 +158,11 @@ function importConfig() {
                 enabled: source.enabled !== false
               }));
             } else {
-              importedConfig.apiSources = [];
+              importedConfig.apiSources = getDefaultApiSources();
             }
           } else {
             // 确保 apiSources 存在
-            importedConfig.apiSources = [];
+            importedConfig.apiSources = getDefaultApiSources();
           }
           chrome.storage.local.set(importedConfig, () => {
             showMessage('配置已导入');
@@ -185,14 +187,14 @@ function resetConfig() {
     const defaultConfig = {
       autoPopup: true,
       language: 'c',
-      aiEnabled: false,
+      aiEnabled: true,
       debugMode: false,
       debugEnabled: false,
       showBuildTime: false,
       extractDelay: 2000,
       modelSelectMode: 'random',
       selectedModelId: '',
-      apiSources: [],
+      apiSources: getDefaultApiSources(),
       aiSystemPrompt: `你是专业的编程题 AC 生成器。
 语言：{language}
 

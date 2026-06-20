@@ -43,15 +43,6 @@ function switchTab(tab) {
       
       <button 
         class="nav-item" 
-        :class="{ active: activeTab === 'ai' }"
-        @click="switchTab('ai')"
-      >
-        <span class="nav-icon">🤖</span>
-        <span class="nav-text">AI 设置</span>
-      </button>
-      
-      <button 
-        class="nav-item" 
         :class="{ active: activeTab === 'api' }"
         @click="switchTab('api')"
       >
@@ -66,15 +57,6 @@ function switchTab(tab) {
       >
         <span class="nav-icon">💾</span>
         <span class="nav-text">数据管理</span>
-      </button>
-      
-      <button 
-        class="nav-item" 
-        :class="{ active: activeTab === 'about' }"
-        @click="switchTab('about')"
-      >
-        <span class="nav-icon">ℹ️</span>
-        <span class="nav-text">关于</span>
       </button>
       
       <button 

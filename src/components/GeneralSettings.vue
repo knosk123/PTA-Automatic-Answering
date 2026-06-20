@@ -1,13 +1,47 @@
 <script setup>
 import { ref, computed } from 'vue';
 
-// 配置数据
-const config = ref({
+const defaultGeneralConfig = {
   autoPopup: true,
-  language: 'c'
-});
+  language: 'c',
+  aiEnabled: true,
+  modelSelectMode: 'random',
+  selectedModelId: '',
+  aiSystemPrompt: `你是专业的编程题 AC 生成器。
+语言：{language}
 
-// 预置语言列表
+请直接输出**能 AC 的完整代码**，不要解释、不要说明、不要多余内容。
+严格遵守格式：换行、空格、缩进必须完全符合题目要求。
+
+以下是题目内容：
+{problem content}`,
+  aiErrorPrompt: `你是专业的编程题 AC 生成器。
+语言：{language}
+错误类型：{error_type}
+编译器提示：{compiler_msg}
+测试点提示：{data_tip}
+
+请直接输出**能 AC 的完整代码**，不要解释、不要说明、不要多余内容。
+严格遵守格式：换行、空格、缩进必须完全符合题目要求。
+题目如下：
+{problem content}
+错误源码如下：
+{res_code}`,
+  choiceBatchSize: 20,
+  choicePrompt: `你是一个专业的AI做题工具
+请直接输出**符合格式的JSON**，不要解释、不要说明、不要多余内容。
+格式如下
+[
+  "A",
+  "B"
+]
+
+以下是题目内容：
+{problem content}`
+};
+
+const config = ref({ ...defaultGeneralConfig });
+
 const presetLanguages = [
   { value: 'c', label: 'C' },
   { value: 'c++', label: 'C++' },
@@ -36,10 +70,8 @@ const presetLanguages = [
   { value: 'bash', label: 'Bash' },
   { value: 'powershell', label: 'PowerShell' },
   { value: 'ps', label: 'PowerShell' },
-
-  // 👇 下面是我给你加的【冷门/玩具/极小众语言】
   { value: 'assembly', label: 'Assembly' },
-  { value: 'asm', label:'汇编语言' },
+  { value: 'asm', label: '汇编语言' },
   { value: 'brainfuck', label: 'Brainfuck' },
   { value: 'bf', label: 'Brainfuck' },
   { value: 'intercal', label: 'INTERCAL' },
@@ -65,136 +97,151 @@ const presetLanguages = [
   { value: 'ocaml', label: 'OCaml' }
 ];
 
-// 是否显示下拉建议
 const showSuggestions = ref(false);
 
-// 过滤后的建议列表
 const filteredSuggestions = computed(() => {
-  const input = config.value.language.toLowerCase().trim();
+  const input = String(config.value.language || '').toLowerCase().trim();
   if (!input) return presetLanguages.slice(0, 8);
-  
-  return presetLanguages.filter(lang => 
-    lang.value.toLowerCase().includes(input) || 
+
+  return presetLanguages.filter(lang =>
+    lang.value.toLowerCase().includes(input) ||
     lang.label.toLowerCase().includes(input)
   ).slice(0, 8);
 });
 
-// 选择建议
 function selectSuggestion(lang) {
   config.value.language = lang.value;
   showSuggestions.value = false;
   autoSaveConfig();
 }
 
-// 隐藏建议（延迟，以便点击事件触发）
 function hideSuggestions() {
   setTimeout(() => {
     showSuggestions.value = false;
   }, 200);
 }
 
-// 显示状态消息
-function showMessage(message, type = 'success') {
-  const messageElement = document.createElement('div');
-  messageElement.style.position = 'fixed';
-  messageElement.style.top = '20px';
-  messageElement.style.right = '20px';
-  messageElement.style.padding = '12px 20px';
-  messageElement.style.borderRadius = '6px';
-  messageElement.style.color = '#fff';
-  messageElement.style.fontSize = '14px';
-  messageElement.style.fontWeight = '500';
-  messageElement.style.zIndex = '9999';
-  messageElement.style.transition = 'all 0.3s ease';
-  messageElement.style.opacity = '0';
-  messageElement.style.transform = 'translateY(-20px)';
-  
-  if (type === 'error') {
-    messageElement.style.backgroundColor = '#dc2626';
-  } else {
-    messageElement.style.backgroundColor = '#10b981';
-  }
-  
-  messageElement.textContent = message;
-  document.body.appendChild(messageElement);
-  
-  setTimeout(() => {
-    messageElement.style.opacity = '1';
-    messageElement.style.transform = 'translateY(0)';
-  }, 100);
-  
-  setTimeout(() => {
-    messageElement.style.opacity = '0';
-    messageElement.style.transform = 'translateY(-20px)';
-    setTimeout(() => {
-      if (messageElement.parentNode) {
-        document.body.removeChild(messageElement);
-      }
-    }, 300);
-  }, 2000);
-}
-
-// 加载配置
 function loadConfig() {
-  chrome.storage.local.get(['autoPopup', 'language'], (result) => {
+  chrome.storage.local.get(Object.keys(defaultGeneralConfig), (result) => {
     config.value = {
-      autoPopup: result.autoPopup !== undefined ? result.autoPopup : true,
-      language: result.language || 'c'
+      ...defaultGeneralConfig,
+      ...result,
+      aiEnabled: true,
+      modelSelectMode: 'random',
+      selectedModelId: ''
     };
+    chrome.storage.local.set({ aiEnabled: true, modelSelectMode: 'random', selectedModelId: '' });
   });
 }
 
-// 自动保存配置
+const GENERAL_KEYS = Object.keys(defaultGeneralConfig);
+
 function autoSaveConfig() {
-  const configToSave = JSON.parse(JSON.stringify(config.value));
+  const raw = JSON.parse(JSON.stringify(config.value));
+  const configToSave = {};
+  GENERAL_KEYS.forEach((key) => {
+    configToSave[key] = raw[key];
+  });
+  configToSave.aiEnabled = true;
+  configToSave.modelSelectMode = 'random';
+  configToSave.selectedModelId = '';
   chrome.storage.local.set(configToSave);
 }
 
-// 页面加载完成后初始化
+let textareaTimer = null;
+function debouncedSave() {
+  if (textareaTimer) clearTimeout(textareaTimer);
+  textareaTimer = setTimeout(autoSaveConfig, 500);
+}
+
 loadConfig();
 </script>
 
 <template>
-  <div class="setting-section">
-    <h3 class="section-title">基本设置</h3>
-    <div class="setting-card">
-      <div class="setting-item">
-        <div class="setting-info">
-          <div class="setting-name">自动弹出浮动窗口</div>
-          <div class="setting-desc">在 PTA 答题页面自动显示代码提交浮动窗口</div>
+  <div>
+    <div class="setting-section">
+      <h3 class="section-title">基本设置</h3>
+      <div class="setting-card">
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-name">自动弹出浮动窗口</div>
+            <div class="setting-desc">在 PTA 答题页面自动显示代码提交浮动窗口</div>
+          </div>
+          <label class="toggle">
+            <input type="checkbox" v-model="config.autoPopup" @change="autoSaveConfig">
+            <span class="toggle-slider"></span>
+          </label>
         </div>
-        <label class="toggle">
-          <input type="checkbox" v-model="config.autoPopup" @change="autoSaveConfig">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-      
-      <div class="setting-item">
-        <div class="setting-info">
-          <div class="setting-name">指定语言</div>
-          <div class="setting-desc">AI 生成代码的默认语言（可自定义输入）</div>
-        </div>
-        <div class="language-input-wrapper">
-          <input 
-            type="text" 
-            v-model="config.language" 
-            class="input-text"
-            placeholder="输入语言，如：c, java, python"
-            @focus="showSuggestions = true"
-            @blur="hideSuggestions"
-            @change="autoSaveConfig"
-          >
-          <div v-if="showSuggestions && filteredSuggestions.length > 0" class="suggestions-dropdown">
-            <div 
-              v-for="lang in filteredSuggestions" 
-              :key="lang.value"
-              class="suggestion-item"
-              @mousedown.prevent="selectSuggestion(lang)"
+
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-name">指定语言</div>
+            <div class="setting-desc">AI 生成代码的默认语言，可自定义输入</div>
+          </div>
+          <div class="language-input-wrapper">
+            <input
+              type="text"
+              v-model="config.language"
+              class="input-text"
+              placeholder="输入语言，如 c, java, python"
+              @focus="showSuggestions = true"
+              @blur="hideSuggestions"
+              @change="autoSaveConfig"
             >
-              <span class="suggestion-label">{{ lang.label }}</span>
-              <span class="suggestion-value">{{ lang.value }}</span>
+            <div v-if="showSuggestions && filteredSuggestions.length > 0" class="suggestions-dropdown">
+              <div
+                v-for="lang in filteredSuggestions"
+                :key="lang.value"
+                class="suggestion-item"
+                @mousedown.prevent="selectSuggestion(lang)"
+              >
+                <span class="suggestion-label">{{ lang.label }}</span>
+                <span class="suggestion-value">{{ lang.value }}</span>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="setting-section">
+      <h3 class="section-title">提示词设置</h3>
+      <div class="setting-card">
+        <div class="setting-item vertical">
+          <div class="setting-info">
+            <div class="setting-name">系统提示词</div>
+            <div class="setting-desc">用于普通编程题生成答案</div>
+          </div>
+          <textarea v-model="config.aiSystemPrompt" class="input-textarea" @input="debouncedSave" @blur="autoSaveConfig"></textarea>
+        </div>
+
+        <div class="setting-item vertical">
+          <div class="setting-info">
+            <div class="setting-name">纠错提示词</div>
+            <div class="setting-desc">提交失败后根据错误信息重新生成答案</div>
+          </div>
+          <textarea v-model="config.aiErrorPrompt" class="input-textarea" @input="debouncedSave" @blur="autoSaveConfig"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="setting-section">
+      <h3 class="section-title">选择题设置</h3>
+      <div class="setting-card">
+        <div class="setting-item">
+          <div class="setting-info">
+            <div class="setting-name">每批题目数量</div>
+            <div class="setting-desc">每次发送给 AI 的选择、判断、填空题数量</div>
+          </div>
+          <input type="number" v-model.number="config.choiceBatchSize" class="input-number" min="1" max="100" @change="autoSaveConfig">
+        </div>
+
+        <div class="setting-item vertical">
+          <div class="setting-info">
+            <div class="setting-name">选择题提示词</div>
+            <div class="setting-desc">使用 {problem content} 作为题目内容占位符</div>
+          </div>
+          <textarea v-model="config.choicePrompt" class="input-textarea" @input="debouncedSave" @blur="autoSaveConfig"></textarea>
         </div>
       </div>
     </div>
@@ -226,6 +273,12 @@ loadConfig();
   border-bottom: none;
 }
 
+.setting-item.vertical {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
 .setting-info {
   flex: 1;
   min-width: 0;
@@ -244,7 +297,6 @@ loadConfig();
   line-height: 1.4;
 }
 
-/* Toggle Switch */
 .toggle {
   position: relative;
   display: inline-block;
@@ -291,14 +343,13 @@ input:checked + .toggle-slider:before {
   transform: translateX(20px);
 }
 
-/* Language Input */
 .language-input-wrapper {
   position: relative;
   width: 200px;
 }
 
-.input-text {
-  width: 100%;
+.input-text,
+.input-number {
   padding: 8px 12px;
   border: 1px solid #e5e5e5;
   border-radius: 6px;
@@ -307,7 +358,37 @@ input:checked + .toggle-slider:before {
   transition: all 0.2s;
 }
 
-.input-text:focus {
+.input-text {
+  width: 100%;
+}
+
+.input-number {
+  width: 80px;
+  text-align: center;
+}
+
+.input-text:focus,
+.input-number:focus {
+  outline: none;
+  border-color: #1a1a1a;
+  background-color: #fff;
+}
+
+.input-textarea {
+  width: 100%;
+  min-height: 120px;
+  padding: 12px 14px;
+  border: 1px solid #e5e5e5;
+  border-radius: 6px;
+  font-size: 14px;
+  background-color: #fafafa;
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+  transition: all 0.2s;
+}
+
+.input-textarea:focus {
   outline: none;
   border-color: #1a1a1a;
   background-color: #fff;
@@ -339,14 +420,6 @@ input:checked + .toggle-slider:before {
 
 .suggestion-item:hover {
   background-color: #f5f5f5;
-}
-
-.suggestion-item:first-child {
-  border-radius: 6px 6px 0 0;
-}
-
-.suggestion-item:last-child {
-  border-radius: 0 0 6px 6px;
 }
 
 .suggestion-label {

@@ -2,11 +2,9 @@
 import { ref, computed, onMounted } from 'vue';
 import Sidebar from './components/Sidebar.vue';
 import GeneralSettings from './components/GeneralSettings.vue';
-import AISettings from './components/AISettings.vue';
 import ApiSourceManagement from './components/ApiSourceManagement.vue';
 import DebugSettings from './components/DebugSettings.vue';
 import DataManagement from './components/DataManagement.vue';
-import AboutSettings from './components/AboutSettings.vue';
 
 // 当前选中的选项卡
 const activeTab = ref('general');
@@ -33,46 +31,12 @@ function switchTab(tab) {
 
 // 页面加载完成后初始化
 onMounted(() => {
-  // 从URL参数中获取tab参数，如果有则切换到对应页面
+  const validTabs = new Set(['general', 'api', 'debug', 'data']);
   const urlParams = new URLSearchParams(window.location.search);
   const tabParam = urlParams.get('tab');
-  if (tabParam) {
+  if (tabParam && validTabs.has(tabParam)) {
     activeTab.value = tabParam;
-    // 如果是subErr参数，打开关于页面
-    if (tabParam === 'subErr') {
-      activeTab.value = 'about';
-      // 延迟一下，确保页面已加载
-      setTimeout(() => {
-        // 触发打开PyCatch模态框的事件
-        const event = new CustomEvent('openPycatchModal');
-        window.dispatchEvent(event);
-      }, 1000);
-    }
-  } else {
-    // 检查是否是第一次加载插件
-    chrome.storage.local.get(['pluginLoaded'], (result) => {
-      if (!result.pluginLoaded) {
-        // 第一次加载，打开关于页面
-        activeTab.value = 'about';
-        // 标记插件已加载
-        chrome.storage.local.set({ pluginLoaded: true });
-      }
-    });
   }
-  
-  // 监听来自content-script的消息
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === 'openPycatchModal') {
-      // 切换到关于页面
-      activeTab.value = 'about';
-      // 延迟一下，确保页面已加载
-      setTimeout(() => {
-        // 触发打开PyCatch模态框的事件
-        const event = new CustomEvent('openPycatchModal');
-        window.dispatchEvent(event);
-      }, 1000);
-    }
-  });
 });
 </script>
 
@@ -95,12 +59,6 @@ onMounted(() => {
         <GeneralSettings />
       </div>
       
-      <!-- AI 设置 -->
-      <div v-show="activeTab === 'ai'" class="panel">
-        <h2 class="panel-title">AI 设置</h2>
-        <AISettings />
-      </div>
-      
       <!-- API 源管理 -->
       <div v-show="activeTab === 'api'" class="panel panel-full">
         <ApiSourceManagement />
@@ -118,11 +76,6 @@ onMounted(() => {
         <DataManagement />
       </div>
       
-      <!-- 关于 -->
-      <div v-show="activeTab === 'about'" class="panel">
-        <h2 class="panel-title">关于</h2>
-        <AboutSettings />
-      </div>
     </div>
   </div>
 </template>

@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue';
+import { buildOpenAICompatibleChatBody, getAIRequestTimeoutMs } from '../utils/aiAnswerHelpers.js';
 const props = defineProps({
  model: {
  type: String,
@@ -55,14 +56,9 @@ async function sendMessage() {
  try {
  isSending.value = true;
  // 构建请求
- const requestBody = {
- model: props.model,
- messages: [
+ const requestBody = buildOpenAICompatibleChatBody(props.model, [
  { role: 'user', content: userMessage }
- ],
- temperature: 0.7,
- stream: false
- };
+ ], false, { apiUrl: props.apiUrl });
  // 发送请求
  const response = await sendExtensionMessage({
  action: 'aiFetch',
@@ -70,6 +66,7 @@ async function sendMessage() {
  endpoint: 'chat/completions',
  openAICompatible: true,
  method: 'POST',
+ timeoutMs: getAIRequestTimeoutMs({ reasoning: true }),
  headers: {
  'Content-Type': 'application/json',
  'Authorization': `Bearer ${props.apiKey}`

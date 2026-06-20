@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue';
 import ChatTest from './ChatTest.vue';
+import { buildOpenAICompatibleChatBody, getAIRequestTimeoutMs, getDefaultApiSources } from '../utils/aiAnswerHelpers.js';
 
 // 配置数据
 const config = ref({
@@ -165,32 +166,7 @@ function loadConfig() {
       }));
     } else {
       // 添加默认 API 源
-      config.value.apiSources = [
-        {
-          name: '硅基流动',
-          url: 'https://api.siliconflow.cn/v1',
-          keys: [''],
-          models: ['Qwen/Qwen2.5-7B-Instruct'],
-          enabled: false,
-          icon: {
-            type: 'url',
-            content: 'https://cloud.siliconflow.cn/favicon.ico',
-            color: '#32F08C'
-          }
-        },
-        {
-          name: '阿里云百炼',
-          url: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          keys: [''],
-          models: ['qwen3-max'],
-          enabled: false,
-          icon: {
-            type: 'url',
-            content: 'https://img.alicdn.com/imgextra/i4/O1CN01YDrZSq1jY4mWMcVoy_!!6000000004559-2-tps-56-56.png',
-            color: '#32F08C'
-          }
-        }
-      ];
+      config.value.apiSources = getDefaultApiSources();
       // 保存默认 API 源到存储
       autoSaveConfig();
     }
@@ -290,15 +266,15 @@ async function checkModel(model, apiKey, apiUrl) {
       endpoint: 'chat/completions',
       openAICompatible: true,
       method: 'POST',
+      timeoutMs: getAIRequestTimeoutMs({ reasoning: false }),
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },
-      body: {
-        model,
-        messages: [{ role: 'user', content: '测试模型是否可用' }],
-        stream: false
-      }
+      body: buildOpenAICompatibleChatBody(model, [{ role: 'user', content: 'ping' }], false, {
+        apiUrl,
+        enableProviderReasoning: false
+      })
     });
 
     if (response?.success && response.ok) {

@@ -3,7 +3,6 @@ import { ref, onMounted } from 'vue';
 import { PLUGIN_CONFIG, checkForUpdates } from './config.js';
 
 const autoPopup = ref(false);
-const aiEnabled = ref(false);
 const version = ref(PLUGIN_CONFIG.version);
 const hasUpdate = ref(false);
 const showUpdateModal = ref(false);
@@ -31,12 +30,6 @@ function openFeedback() {
 function toggleAutoPopup() {
   autoPopup.value = !autoPopup.value;
   chrome.storage.local.set({ autoPopup: autoPopup.value });
-}
-
-// 切换AI启用状态
-function toggleAiEnabled() {
-  aiEnabled.value = !aiEnabled.value;
-  chrome.storage.local.set({ aiEnabled: aiEnabled.value });
 }
 
 // 版本号点击事件 - 点击5下开启调试模式
@@ -92,7 +85,7 @@ function openGiteeUpdate() {
 onMounted(async () => {
   chrome.storage.local.get(['autoPopup', 'aiEnabled', 'debugMode', 'debugEnabled'], (result) => {
     autoPopup.value = result.autoPopup ?? true;
-    aiEnabled.value = result.aiEnabled ?? false;
+    chrome.storage.local.set({ aiEnabled: true, modelSelectMode: 'random', selectedModelId: '' });
     
     // 检查更新
     checkForUpdates().then(updateInfo => {
@@ -136,14 +129,6 @@ onMounted(async () => {
           <span class="toggle-slider"></span>
         </label>
       </div>
-      <div class="setting">
-        <span>AI</span>
-        <label class="toggle">
-          <input type="checkbox" :checked="aiEnabled" @change="toggleAiEnabled">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-
     </div>
 
   <footer class="footer">

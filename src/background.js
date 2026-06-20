@@ -1,4 +1,5 @@
 import { buildApiUrl, buildOpenAICompatibleUrl } from './utils/apiUrl.js';
+import { collectOpenAIStreamContentFromSseText } from './utils/aiAnswerHelpers.js';
 
 function shouldRetryStatus(status) {
   return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
@@ -8,18 +9,30 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function getFetchTimeoutMs(options = {}) {
+  return options.timeoutMs || 120000;
+}
+
 async function fetchWithRetry(url, options, retries = 2) {
   let lastResponse;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), getFetchTimeoutMs(options));
     try {
-      const response = await fetch(url, options);
+      const { timeoutMs, ...fetchOptions } = options || {};
+      const response = await fetch(url, { ...fetchOptions, signal: controller.signal });
       lastResponse = response;
       if (!shouldRetryStatus(response.status) || attempt === retries) {
         return response;
       }
     } catch (error) {
+      if (error?.name === 'AbortError') {
+        throw new Error(`AI 请求超时（${Math.round(getFetchTimeoutMs(options) / 1000)} 秒）`);
+      }
       if (attempt === retries) throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     await delay(500 * (attempt + 1));
@@ -35,13 +48,21 @@ async function requestAiEndpoint(message) {
   const response = await fetchWithRetry(url, {
     method: message.method || 'POST',
     headers: message.headers || {},
-    body: message.body ? JSON.stringify(message.body) : undefined
+    body: message.body ? JSON.stringify(message.body) : undefined,
+    timeoutMs: message.timeoutMs
   });
 
   const contentType = response.headers.get('content-type') || '';
-  const data = contentType.includes('application/json')
-    ? await response.json().catch(() => null)
-    : await response.text();
+  let data;
+
+  if (contentType.includes('application/json')) {
+    data = await response.json().catch(() => null);
+  } else {
+    const text = await response.text();
+    data = message.body?.stream || contentType.includes('text/event-stream')
+      ? { choices: [{ message: { content: collectOpenAIStreamContentFromSseText(text) } }] }
+      : text;
+  }
 
   return {
     ok: response.ok,
