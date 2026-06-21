@@ -14,10 +14,9 @@
 
 ### 1.下载Releases
 
-### 2.点击管理扩展，加载解压缩的扩展，选择到dist文件目录
+### 2.点击 管理扩展，开启开发人员模式，点击 加载解压缩的扩展，选择到dist文件目录
 
-<img width="580" height="535" alt="图片" src="https://github.com/user-attachments/assets/78cf236c-4d1d-4b82-adc2-9d65aee0695a" />
-
+<img width="1593" height="1166" alt="图片" src="https://github.com/user-attachments/assets/170c110f-e24b-4058-b037-440fb13e9168" />
 
 <img width="893" height="151" alt="图片" src="https://github.com/user-attachments/assets/5feacf0f-7000-4eb6-aee2-665f489105f9" />
 
